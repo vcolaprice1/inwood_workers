@@ -108,29 +108,92 @@
 
         .time-control {
             background: rgba(255,255,255,0.92);
-            padding: 10px 12px;
+            padding: 9px 12px 10px;
             border-radius: 8px;
             box-shadow: 0 1px 5px rgba(0,0,0,0.35);
             font-family: Arial, sans-serif;
             font-size: 12px;
             line-height: 1.35;
-            min-width: 230px;
+            width: min(820px, calc(100vw - 48px));
         }
-        .time-control-title {
+        .time-control.collapsed .time-control-body {
+            display: none;
+        }
+        .time-control-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
             font-weight: 700;
-            margin-bottom: 6px;
+            cursor: pointer;
+        }
+        .time-control-toggle {
+            border: 1px solid #aaa;
+            background: #f7f7f7;
+            border-radius: 3px;
+            padding: 0 6px;
+            cursor: pointer;
+        }
+        .time-control-body {
+            margin-top: 7px;
+        }
+        .time-histogram {
+            height: 86px;
+            display: flex;
+            align-items: flex-end;
+            gap: 1px;
+            padding: 4px 2px 0;
+            border-bottom: 1px solid #777;
+        }
+        .time-bar {
+            flex: 1 1 0;
+            min-width: 2px;
+            background: #b7b7b7;
+            opacity: 0.45;
+            cursor: pointer;
+            border: 0;
+            border-radius: 0;
+            padding: 0;
+            margin: 0;
+        }
+        .time-bar.active {
+            background: #40503d;
+            opacity: 0.88;
+        }
+        .time-axis {
+            display: flex;
+            justify-content: space-between;
+            margin: 2px 1px 5px;
+            color: #555;
+            font-size: 10px;
+        }
+        .time-range-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        .time-range-grid label {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            align-items: center;
+            gap: 7px;
         }
         .time-control input[type=range] {
             width: 100%;
+            min-width: 0;
         }
         .time-control-row {
             display: flex;
             justify-content: space-between;
+            align-items: center;
             gap: 8px;
             margin-top: 5px;
         }
-        .time-control button {
-            margin-top: 7px;
+        .time-actions {
+            display: flex;
+            gap: 6px;
+        }
+        .time-control button:not(.time-bar) {
             padding: 4px 8px;
             cursor: pointer;
             border: 1px solid #aaa;
@@ -141,9 +204,15 @@
             font-weight: 700;
         }
         .time-control .time-help {
-            margin: 2px 0 7px 0;
+            margin: 0;
             color: #555;
             font-size: 11px;
+        }
+        @media (max-width: 680px) {
+            .time-control { width: calc(100vw - 36px); }
+            .time-range-grid { grid-template-columns: 1fr; gap: 4px; }
+            .time-histogram { height: 64px; }
+            .time-control-row { align-items: flex-start; flex-direction: column; }
         }
 
         /* Keep popup and hover labels above high-z-index point panes. */
@@ -3633,7 +3702,7 @@
             };
         }
 
-        function applyDeathYearFilter(layerGroups, selectedYear, mode) {
+        function applyDeathYearRangeFilter(layerGroups, startYear, endYear) {
             var visibleCount = 0;
             var totalWithYear = 0;
             layerGroups.forEach(function(group) {
@@ -3642,7 +3711,7 @@
                     var y = layer._deathYear;
                     var hasYear = y !== null && y !== undefined;
                     if (hasYear) totalWithYear += 1;
-                    var show = hasYear && (mode === 'single' ? y === selectedYear : y <= selectedYear);
+                    var show = hasYear && y >= startYear && y <= endYear;
                     if (show) {
                         if (!group.hasLayer(layer)) group.addLayer(layer);
                         visibleCount += 1;
@@ -3673,110 +3742,212 @@
             var years = collectTemporalPointLayers(layerGroups);
             if (years.min === null || years.max === null) return;
             var flowLayers = options.flowLayers || [];
+            var flowFeatures = options.flowFeatures || [];
             var animationTimer = null;
-            var hiddenDuringAnimation = [];
+            var hiddenStaticFlows = [];
+            var filterActive = false;
+            var temporalFlowLayer = L.layerGroup();
 
-            function hideFlowLayersForAnimation() {
-                hiddenDuringAnimation = [];
+            function hideStaticFlowLayers() {
+                if (filterActive) return;
+                hiddenStaticFlows = [];
                 flowLayers.forEach(function(flowLayer) {
                     if (flowLayer && map.hasLayer(flowLayer)) {
-                        hiddenDuringAnimation.push(flowLayer);
+                        hiddenStaticFlows.push(flowLayer);
                         map.removeLayer(flowLayer);
                     }
                 });
+                filterActive = true;
             }
-            function restoreFlowLayersAfterAnimation() {
-                hiddenDuringAnimation.forEach(function(flowLayer) {
+            function restoreStaticFlowLayers() {
+                if (map.hasLayer(temporalFlowLayer)) map.removeLayer(temporalFlowLayer);
+                temporalFlowLayer.clearLayers();
+                hiddenStaticFlows.forEach(function(flowLayer) {
                     if (flowLayer && !map.hasLayer(flowLayer)) map.addLayer(flowLayer);
                 });
-                hiddenDuringAnimation = [];
+                hiddenStaticFlows = [];
+                filterActive = false;
                 bringPointLayersToFrontSafe();
+            }
+
+            function buildTemporalFlows(startYear, endYear) {
+                hideStaticFlowLayers();
+                temporalFlowLayer.clearLayers();
+                var grouped = {};
+                flowFeatures.forEach(function(feature) {
+                    var year = extractDeathYear(feature);
+                    var geometry = feature && feature.geometry;
+                    if (year === null || year < startYear || year > endYear || !geometry || !geometry.coordinates) return;
+                    var line = geometry.type === 'MultiLineString' ? geometry.coordinates[0] : geometry.coordinates;
+                    if (!line || line.length < 2) return;
+                    var from = line[0];
+                    var to = line[line.length - 1];
+                    var key = from[0].toFixed(6) + ',' + from[1].toFixed(6) + '|' + to[0].toFixed(6) + ',' + to[1].toFixed(6);
+                    if (!grouped[key]) grouped[key] = {from: from, to: to, count: 0};
+                    grouped[key].count += 1;
+                });
+                Object.keys(grouped).forEach(function(key) {
+                    var item = grouped[key];
+                    L.polyline(
+                        [[item.from[1], item.from[0]], [item.to[1], item.to[0]]],
+                        {
+                            pane: 'pane_Birth_to_death_flows_aggregated_26',
+                            color: '#a63b2f',
+                            opacity: 0.48,
+                            weight: 1 + Math.sqrt(item.count) * 1.45,
+                            interactive: false
+                        }
+                    ).addTo(temporalFlowLayer);
+                });
+                if (!map.hasLayer(temporalFlowLayer)) temporalFlowLayer.addTo(map);
+                bringPointLayersToFrontSafe();
+            }
+
+            var yearCounts = {};
+            var maxCount = 0;
+            layerGroups.forEach(function(group) {
+                (group._allTemporalPointLayers || []).forEach(function(layer) {
+                    var y = layer._deathYear;
+                    if (y === null || y === undefined) return;
+                    yearCounts[y] = (yearCounts[y] || 0) + 1;
+                    if (yearCounts[y] > maxCount) maxCount = yearCounts[y];
+                });
+            });
+            var bars = '';
+            for (var y = years.min; y <= years.max; y++) {
+                var n = yearCounts[y] || 0;
+                var height = maxCount ? Math.max(2, Math.round((n / maxCount) * 78)) : 2;
+                bars += '<button class="time-bar active" type="button" data-year="' + y + '" data-count="' + n + '" style="height:' + height + 'px" aria-label="' + y + ': ' + n + ' deaths"></button>';
             }
 
             var control = L.control({position: options.position || 'bottomleft'});
             control.onAdd = function() {
                 var div = L.DomUtil.create('div', 'time-control');
                 div.innerHTML = '' +
-                    '<div class="time-control-title">Temporal distribution of death places</div>' +
-                    '<div class="time-help">Cumulative display of recorded death places by year.</div>' +
-                    '<label>Year: <strong class="time-year-label">' + years.max + '</strong></label>' +
-                    '<input class="time-year-slider" type="range" min="' + years.min + '" max="' + years.max + '" value="' + years.max + '" step="1" />' +
-                    '<div class="time-control-row"><label><input class="time-mode" type="checkbox" checked /> cumulative</label><span class="time-count"></span></div>' +
-                    '<div class="time-control-row"><button class="time-play" type="button">Play</button><button class="time-reset" type="button">Show all</button></div>';
+                    '<div class="time-control-header"><span>Timeline of recorded deaths</span><button class="time-control-toggle" type="button" aria-label="Close timeline">\u2212</button></div>' +
+                    '<div class="time-control-body">' +
+                    '<div class="time-help">Select a time span to filter death places and birth–death relations.</div>' +
+                    '<div class="time-histogram" role="img" aria-label="Histogram of recorded deaths by year">' + bars + '</div>' +
+                    '<div class="time-axis"><span>' + years.min + '</span><span>' + Math.round((years.min + years.max) / 2) + '</span><span>' + years.max + '</span></div>' +
+                    '<div class="time-range-grid">' +
+                    '<label>From <strong class="time-start-label">' + years.min + '</strong><input class="time-start-slider" type="range" min="' + years.min + '" max="' + years.max + '" value="' + years.min + '" step="1" /></label>' +
+                    '<label>To <strong class="time-end-label">' + years.max + '</strong><input class="time-end-slider" type="range" min="' + years.min + '" max="' + years.max + '" value="' + years.max + '" step="1" /></label>' +
+                    '</div>' +
+                    '<div class="time-control-row"><span class="time-count"></span><div class="time-actions"><button class="time-play" type="button">Play</button><button class="time-reset" type="button">Show all</button></div></div>' +
+                    '</div>';
                 L.DomEvent.disableClickPropagation(div);
                 L.DomEvent.disableScrollPropagation(div);
                 return div;
             };
             control.addTo(map);
             var container = control.getContainer();
-            var slider = container.querySelector('.time-year-slider');
-            var label = container.querySelector('.time-year-label');
+            var header = container.querySelector('.time-control-header');
+            var toggle = container.querySelector('.time-control-toggle');
+            var startSlider = container.querySelector('.time-start-slider');
+            var endSlider = container.querySelector('.time-end-slider');
+            var startLabel = container.querySelector('.time-start-label');
+            var endLabel = container.querySelector('.time-end-label');
             var count = container.querySelector('.time-count');
-            var mode = container.querySelector('.time-mode');
             var reset = container.querySelector('.time-reset');
             var play = container.querySelector('.time-play');
-            function update() {
-                var selectedYear = parseInt(slider.value, 10);
-                label.textContent = selectedYear;
-                var stats = applyDeathYearFilter(layerGroups, selectedYear, mode.checked ? 'cumulative' : 'single');
-                count.textContent = stats.visible + ' / ' + stats.total;
+            var barElements = Array.prototype.slice.call(container.querySelectorAll('.time-bar'));
+
+            header.addEventListener('click', function() {
+                var collapsed = container.classList.toggle('collapsed');
+                toggle.textContent = collapsed ? '+' : '\u2212';
+                toggle.setAttribute('aria-label', collapsed ? 'Open timeline' : 'Close timeline');
+            });
+
+            function selectedRange() {
+                var start = parseInt(startSlider.value, 10);
+                var end = parseInt(endSlider.value, 10);
+                if (start > end) {
+                    var temp = start;
+                    start = end;
+                    end = temp;
+                }
+                return {start: start, end: end};
             }
-            function stopAnimation(restoreFlows) {
+            function update() {
+                var range = selectedRange();
+                startLabel.textContent = range.start;
+                endLabel.textContent = range.end;
+                barElements.forEach(function(bar) {
+                    var year = parseInt(bar.getAttribute('data-year'), 10);
+                    bar.classList.toggle('active', year >= range.start && year <= range.end);
+                });
+                var isFullRange = range.start === years.min && range.end === years.max;
+                var stats = applyDeathYearRangeFilter(layerGroups, range.start, range.end);
+                if (isFullRange) {
+                    restoreStaticFlowLayers();
+                } else {
+                    buildTemporalFlows(range.start, range.end);
+                }
+                count.textContent = range.start + '–' + range.end + ': ' + stats.visible + ' / ' + stats.total + ' records';
+            }
+            function stopAnimation() {
                 if (animationTimer) {
                     clearInterval(animationTimer);
                     animationTimer = null;
                 }
                 play.textContent = 'Play';
-                if (restoreFlows) restoreFlowLayersAfterAnimation();
             }
             function startAnimation() {
-                stopAnimation(false);
-                hideFlowLayersForAnimation();
-                mode.checked = true;
-                slider.value = years.min;
+                stopAnimation();
+                startSlider.value = years.min;
+                endSlider.value = years.min;
                 update();
                 play.textContent = 'Pause';
                 animationTimer = setInterval(function() {
-                    var current = parseInt(slider.value, 10);
+                    var current = parseInt(endSlider.value, 10);
                     if (current >= years.max) {
-                        stopAnimation(true);
-                        slider.value = years.max;
-                        update();
+                        stopAnimation();
                         return;
                     }
-                    slider.value = current + 1;
+                    startSlider.value = current + 1;
+                    endSlider.value = current + 1;
                     update();
                 }, options.animationDelay || 260);
             }
-            slider.addEventListener('input', function() {
-                stopAnimation(true);
+            startSlider.addEventListener('input', function() {
+                stopAnimation();
                 update();
             });
-            mode.addEventListener('change', function() {
-                stopAnimation(true);
+            endSlider.addEventListener('input', function() {
+                stopAnimation();
                 update();
+            });
+            barElements.forEach(function(bar) {
+                bar.addEventListener('click', function() {
+                    stopAnimation();
+                    var year = parseInt(bar.getAttribute('data-year'), 10);
+                    startSlider.value = year;
+                    endSlider.value = year;
+                    update();
+                });
             });
             reset.addEventListener('click', function() {
-                stopAnimation(true);
-                slider.value = years.max;
-                label.textContent = years.max;
-                var all = showAllTemporalPoints(layerGroups);
-                count.textContent = all + ' / ' + all;
+                stopAnimation();
+                startSlider.value = years.min;
+                endSlider.value = years.max;
+                showAllTemporalPoints(layerGroups);
+                update();
             });
             play.addEventListener('click', function() {
                 if (animationTimer) {
-                    stopAnimation(true);
+                    stopAnimation();
                 } else {
                     startAnimation();
                 }
             });
-            var all = showAllTemporalPoints(layerGroups);
-            count.textContent = all + ' / ' + all;
+            showAllTemporalPoints(layerGroups);
+            update();
         }
 
         addDeathTimeControl([layer_Death_places_22], {
             position: 'bottomleft',
             flowLayers: [layer_Birth_to_death_flows_aggregated_26, layer_Birth_to_death_flows_aggregated_RO_21, layer_Birth_to_death_flows_25],
+            flowFeatures: (typeof json_Birth_to_death_flows_25 !== 'undefined' && json_Birth_to_death_flows_25.features) ? json_Birth_to_death_flows_25.features : [],
             animationDelay: 240
         });
         addFlowStatsControl(layer_Birth_to_death_flows_aggregated_26, {
