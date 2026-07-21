@@ -3257,7 +3257,9 @@
         // Custom adjustments for the general map
         // Optional Europe-wide historical context for the year 1900.
         map.createPane('pane_Europe_1900');
-        map.getPane('pane_Europe_1900').style.zIndex = 350;
+        // Keep the historical polygons above the OSM tile pane (400), while
+        // leaving the Austria-Hungary regional layers (402+) visible on top.
+        map.getPane('pane_Europe_1900').style.zIndex = 401;
         map.getPane('pane_Europe_1900').style.pointerEvents = 'none';
         var layer_Europe_1900 = L.geoJson(json_Europe_1900, {
             pane: 'pane_Europe_1900',
