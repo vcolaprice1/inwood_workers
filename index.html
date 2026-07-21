@@ -213,6 +213,53 @@
             text-align: right;
             white-space: nowrap;
         }
+        .heatmap-control {
+            max-width: min(720px, 72vw);
+            max-height: 72vh;
+            overflow: auto;
+            background: rgba(255,255,255,0.94);
+            border-radius: 6px;
+            box-shadow: 0 1px 7px rgba(0,0,0,0.35);
+            padding: 8px 10px;
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+            line-height: 1.35;
+        }
+        .heatmap-control.collapsed .heatmap-body {
+            display: none;
+        }
+        .heatmap-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            font-weight: 700;
+        }
+        .heatmap-toggle {
+            border: 1px solid #aaa;
+            background: #f6f6f6;
+            border-radius: 3px;
+            padding: 0 5px;
+            cursor: pointer;
+        }
+        .heatmap-body img {
+            display: block;
+            width: min(690px, 68vw);
+            height: auto;
+            max-height: 60vh;
+            object-fit: contain;
+            margin-top: 8px;
+        }
+        .heatmap-caption {
+            margin: 6px 0 0;
+            color: #444;
+            font-size: 11px;
+        }
+        @media (max-width: 600px) {
+            .heatmap-control { max-width: 88vw; }
+            .heatmap-body img { width: 84vw; }
+        }
         .leaflet-control-layers {
             max-width: 360px;
             max-height: 88vh;
@@ -291,6 +338,7 @@
         <script src="data/Bukovina_17.js"></script>
         <script src="data/Bohemia_18.js"></script>
         <script src="data/AustrianLitoral_19.js"></script>
+        <script src="data/Europe_1900.js"></script>
         <script src="data/Death_places_RO_20.js"></script>
         <script src="data/Birth_to_death_flows_aggregated_RO_21.js"></script>
         <script src="data/Death_places_22.js"></script>
@@ -415,6 +463,10 @@
             // Remove postal codes accidentally placed at the beginning of geocoded toponyms.
             // Examples: "33038 San Daniele del Friuli" -> "San Daniele del Friuli";
             // "I-33016 Pontebba" -> "Pontebba".
+            text = text.replace(/^\s*(?:[A-Z]{1,3}[-\s])?\d{3,6}\s+/, '');
+            // Geocoders often return a full address. Tooltips and popup titles
+            // should identify only the locality, not province, state or postcode.
+            text = text.split(',')[0].trim();
             text = text.replace(/^\s*(?:[A-Z]{1,3}[-\s])?\d{3,6}\s+/, '');
             return text.trim();
         }
@@ -597,6 +649,32 @@
                     header.addEventListener('click', function() {
                         var collapsed = div.classList.toggle('collapsed');
                         button.textContent = collapsed ? '+' : '−';
+                    });
+                    return div;
+                }
+            });
+            map.addControl(new Control());
+        }
+
+        function addHeatmapControl(options) {
+            options = options || {};
+            var Control = L.Control.extend({
+                options: {position: options.position || 'bottomleft'},
+                onAdd: function() {
+                    var div = L.DomUtil.create('div', 'heatmap-control collapsed');
+                    div.innerHTML = '<div class="heatmap-header"><span>' + escapeHtml(options.title || 'Kernel density heatmap') + '</span><button class="heatmap-toggle" type="button" aria-label="Open heatmap">+</button></div>' +
+                                    '<div class="heatmap-body">' +
+                                    '<img src="images/WW_NA_15072026_heatmap.png" alt="Kernel density estimation heatmap of recorded deaths outside Italy" />' +
+                                    '<p class="heatmap-caption">Kernel density estimation of recorded deaths outside present-day Italy.</p>' +
+                                    '</div>';
+                    L.DomEvent.disableClickPropagation(div);
+                    L.DomEvent.disableScrollPropagation(div);
+                    var header = div.querySelector('.heatmap-header');
+                    var button = div.querySelector('.heatmap-toggle');
+                    header.addEventListener('click', function() {
+                        var collapsed = div.classList.toggle('collapsed');
+                        button.textContent = collapsed ? '+' : '\u2212';
+                        button.setAttribute('aria-label', collapsed ? 'Open heatmap' : 'Close heatmap');
                     });
                     return div;
                 }
@@ -3177,6 +3255,25 @@
         });
 
         // Custom adjustments for the general map
+        // Optional Europe-wide historical context for the year 1900.
+        map.createPane('pane_Europe_1900');
+        map.getPane('pane_Europe_1900').style.zIndex = 350;
+        map.getPane('pane_Europe_1900').style.pointerEvents = 'none';
+        var layer_Europe_1900 = L.geoJson(json_Europe_1900, {
+            pane: 'pane_Europe_1900',
+            interactive: false,
+            style: function() {
+                return {
+                    color: '#40503d',
+                    weight: 1.1,
+                    opacity: 0.85,
+                    fillColor: '#e1e6e1',
+                    fillOpacity: 0.18
+                };
+            }
+        });
+        bounds_group.addLayer(layer_Europe_1900);
+
         // The historical-region polygons are contextual only: disabling their popups
         // prevents accidental clicks on the background from obscuring point data.
         disableLayerInteractivity([
@@ -3185,7 +3282,7 @@
             layer_KingdomofHungary_10, layer_Galicia_11, layer_CroatiaandSlavonia_12,
             layer_Carniola_13, layer_Carinthia_14, layer_Dalmatia_15,
             layer_BosniaandHerzegovina_16, layer_Bukovina_17, layer_Bohemia_18,
-            layer_AustrianLitoral_19
+            layer_AustrianLitoral_19, layer_Europe_1900
         ]);
         function addMissingDeathPlacesIfNeeded(targetLayer) {
             var missingFeatures = [
@@ -3368,22 +3465,22 @@
             return marker;
         }
         var pontebbaReferenceMarker = addPontebbaReferenceMarker();
-        rebindAllFieldsPopup(layer_Birth_places_24, ['Toponimo_georiferito', 'Toponimo_g'], 'Birth place');
-        rebindAllFieldsPopup(layer_Death_places_22, ['Toponimo_georiferito_2', 'Toponimo_2'], 'Death place');
-        rebindAllFieldsPopup(layer_Death_places_RO_20, ['Toponimo_georiferito_2', 'Toponimo_2'], 'Death place');
-        addFrequentPointLabels(layer_Birth_places_24, ['Toponimo_georiferito', 'Toponimo_g'], {
+        rebindAllFieldsPopup(layer_Birth_places_24, ['Luogo di nascita', 'Toponimo_g', 'Toponimo_georiferito'], 'Birth place');
+        rebindAllFieldsPopup(layer_Death_places_22, ['Luogo di morte', 'Toponimo_2', 'Toponimo_georiferito_2'], 'Death place');
+        rebindAllFieldsPopup(layer_Death_places_RO_20, ['Luogo di morte', 'Toponimo_2', 'Toponimo_georiferito_2'], 'Death place');
+        addFrequentPointLabels(layer_Birth_places_24, ['Luogo di nascita', 'Toponimo_g', 'Toponimo_georiferito'], {
             threshold: 5,
             minZoom: 6,
             topN: 8,
             className: 'custom-point-label'
         });
-        addFrequentPointLabels(layer_Death_places_22, ['Toponimo_georiferito_2', 'Toponimo_2'], {
+        addFrequentPointLabels(layer_Death_places_22, ['Luogo di morte', 'Toponimo_2', 'Toponimo_georiferito_2'], {
             threshold: 5,
             minZoom: 6,
             topN: 10,
             className: 'custom-point-label'
         });
-        addFrequentPointLabels(layer_Death_places_RO_20, ['Toponimo_georiferito_2', 'Toponimo_2'], {
+        addFrequentPointLabels(layer_Death_places_RO_20, ['Luogo di morte', 'Toponimo_2', 'Toponimo_georiferito_2'], {
             threshold: 3,
             minZoom: 6,
             topN: 8,
@@ -3607,6 +3704,10 @@
             title: 'Deaths by year',
             position: 'bottomleft'
         });
+        addHeatmapControl({
+            title: 'Kernel density heatmap',
+            position: 'bottomleft'
+        });
 
 
         function bringFlowLayersByWeightToFrontSafe() {
@@ -3661,7 +3762,19 @@
             map.removeLayer(layer_Death_places_RO_20);
         }
 
+        var layer_AustriaHungary_Regions = L.layerGroup([
+            layer_Voralberg_2, layer_UpperAustria_3, layer_Tirol_4, layer_Styria_5,
+            layer_Silesia_6, layer_Salzburg_7, layer_Moravia_8, layer_LowerAustria_9,
+            layer_KingdomofHungary_10, layer_Galicia_11, layer_CroatiaandSlavonia_12,
+            layer_Carniola_13, layer_Carinthia_14, layer_Dalmatia_15,
+            layer_BosniaandHerzegovina_16, layer_Bukovina_17, layer_Bohemia_18,
+            layer_AustrianLitoral_19
+        ]).addTo(map);
+
         var overlaysTree = [
+        {label: '<b>Historical basemaps</b>', collapsed: false, children: [
+            {label: 'Austria-Hungary regions', layer: layer_AustriaHungary_Regions},
+            {label: 'Europe in 1900', layer: layer_Europe_1900},]},
         {label: '<b>General map</b>', collapsed: false, selectAllCheckbox: true, children: [
             {label: 'Birth–death flows<br /><span style="font-size:11px;color:#555;">line width = number of records</span><br /><table><tr><td style="text-align: center;"><img src="legend/Birth_to_death_flows_aggregated_26_120.png" /></td><td>1–2 records</td></tr><tr><td style="text-align: center;"><img src="legend/Birth_to_death_flows_aggregated_26_241.png" /></td><td>2–4 records</td></tr><tr><td style="text-align: center;"><img src="legend/Birth_to_death_flows_aggregated_26_472.png" /></td><td>4–7 records</td></tr><tr><td style="text-align: center;"><img src="legend/Birth_to_death_flows_aggregated_26_7173.png" /></td><td>7–17 records</td></tr><tr><td style="text-align: center;"><img src="legend/Birth_to_death_flows_aggregated_26_17384.png" /></td><td>17–38 records</td></tr></table>', layer: layer_Birth_to_death_flows_aggregated_26},
             {label: '<img src="legend/Birth_places_24.png" /> Birth places', layer: layer_Birth_places_24},
