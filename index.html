@@ -3335,15 +3335,16 @@
             interactive: false,
             style: function() {
                 return {
-                    color: '#40503d',
+                    color: '#000000',
                     weight: 1.1,
-                    opacity: 0.85,
-                    fillColor: '#e1e6e1',
-                    fillOpacity: 0.18
+                    opacity: 1,
+                    fillColor: '#ffffff',
+                    fillOpacity: 0.78
                 };
             }
         });
         bounds_group.addLayer(layer_Europe_1900);
+        map.addLayer(layer_Europe_1900);
 
         // The historical-region polygons are contextual only: disabling their popups
         // prevents accidental clicks on the background from obscuring point data.
